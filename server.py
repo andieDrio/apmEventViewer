@@ -99,7 +99,7 @@ def openai_analyze(events, findings):
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is not configured on the local server. Set it in PowerShell and restart the app.")
-    model = os.environ.get("OPENAI_MODEL", "gpt-5.4-mini").strip() or "gpt-5.4-mini"
+    model = os.environ.get("OPENAI_MODEL", "gpt-6-luna").strip() or "gpt-6-luna"
     pattern = re.compile(r"(?i)(powershell|pwsh|cmd|php-cgi|web.?shell|\.env|frombase64string|encodedcommand|writeallbytes|move_uploaded_file|file_put_contents|schtasks|localgroup|netstat|wevtutil|4625|4624|4720|4728|4732|4697|7045|sysmon)")
     candidates = []
     for e in events:

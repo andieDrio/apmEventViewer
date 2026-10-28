@@ -40,7 +40,7 @@ Set the key in the same PowerShell window used to start the server. Never put it
 
 ```powershell
 $env:OPENAI_API_KEY = "YOUR_API_KEY"
-$env:OPENAI_MODEL = "gpt-5.4-mini" # optional; use a model enabled for your API project
+$env:OPENAI_MODEL = "gpt-6-luna" # optional; use a model enabled for your API project
 .\\.venv\\Scripts\\python.exe server.py
 ```
 
