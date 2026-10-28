@@ -67,7 +67,7 @@ def pdf_report(events,findings,case_name,notes,ai_analysis=None):
     safe=lambda x:str(x).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
     assessment=build_case_assessment(events,findings); counts=Counter(f.severity for f in findings)
     doc=SimpleDocTemplate(buf,pagesize=landscape(A4),rightMargin=12*mm,leftMargin=12*mm,topMargin=12*mm,bottomMargin=14*mm,title="Forensic assessment - "+case_name)
-    story=[Paragraph("DIGITAL FORENSICS LOG ASSESSMENT",styles["Title"]),Paragraph(safe(case_name),styles["Heading2"]),Paragraph("Generated: "+datetime.now(UTC8).strftime("%Y-%m-%d %H:%M:%S UTC+08:00"),styles["Normal"]),Spacer(1,4*mm)]
+    story=[Paragraph("DIGITAL FORENSICS LOG ASSESSMENT",styles["Title"]),Paragraph(safe(case_name),styles["Heading2"]),Paragraph("Generated: "+datetime.now(UTC8).strftime("%Y-%m-%d %H:%M:%S Philippine Standard Time (UTC+08:00)"),styles["Normal"]),Spacer(1,4*mm)]
     metrics=[["Events",str(len(events)),"Files",str(len({e.source_file for e in events})),"Findings",str(len(findings)),"Critical / High",str(counts.get("CRITICAL",0)+counts.get("HIGH",0))]]
     story.append(Table(metrics,colWidths=[20*mm,18*mm,15*mm,18*mm,20*mm,18*mm,30*mm,18*mm],style=TableStyle([("BACKGROUND",(0,0),(-1,-1),colors.HexColor("#EAF0F6")),("GRID",(0,0),(-1,-1),.4,colors.grey),("PADDING",(0,0),(-1,-1),5)])))
     story += [Paragraph("Evidence-based case assessment",styles["Heading2"]),Paragraph("<b>Activity level:</b> "+safe(assessment["activity_level"])+" &nbsp; <b>Confidence (rule-correlation breadth):</b> "+safe(assessment["confidence"]),styles["BodyText"]),Paragraph(safe(assessment["assessment"]),styles["BodyText"])]
@@ -93,7 +93,7 @@ def pdf_report(events,findings,case_name,notes,ai_analysis=None):
         story.append(Paragraph("AI output is an investigative aid, not a confirmed finding. Validate each claim against the cited source file, record/line, timestamp and original evidence.",styles["Italic"]))
     story += [Paragraph("Analyst notes",styles["Heading2"]),Paragraph(safe(notes or "No analyst notes supplied").replace("\\n","<br/>"),styles["BodyText"]),Paragraph("All report timestamps use Philippine Standard Time (UTC+08:00). SHA-256 identifies uploaded bytes. Preserve originals and validate findings against source artifacts. Rule matches and AI assessments are investigative leads, not proof of compromise.",styles["Italic"])]
     def footer(canvas,document):
-        canvas.saveState();canvas.setFont("Helvetica",7);canvas.setFillColor(colors.grey);canvas.drawString(12*mm,7*mm,"apmEventViewer | UTC+08:00 | CONFIDENTIAL");canvas.drawRightString(landscape(A4)[0]-12*mm,7*mm,f"Page {document.page}");canvas.restoreState()
+        canvas.saveState();canvas.setFont("Helvetica",7);canvas.setFillColor(colors.grey);canvas.drawString(12*mm,7*mm,"apmEventViewer | Philippine Standard Time (UTC+08:00) | CONFIDENTIAL");canvas.drawRightString(landscape(A4)[0]-12*mm,7*mm,f"Page {document.page}");canvas.restoreState()
     doc.build(story,onFirstPage=footer,onLaterPages=footer);return buf.getvalue()
 def openai_analyze(events, findings):
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
@@ -104,6 +104,7 @@ def openai_analyze(events, findings):
     candidates = []
     for e in events:
         text = " ".join((e.message, e.raw, e.process, e.provider, e.event_id))
+        text = re.sub(r"(?i)(password|passwd|api[_-]?key|secret|token)\\s*[:=]\\s*[^\\s,;]+", r"\\1=[REDACTED]", text)
         if pattern.search(text):
             candidates.append({"timestamp":e.timestamp,"source_file":e.source_file,"location":e.location,"source_type":e.source_type,"event_id":e.event_id,"level":e.level,"provider":e.provider,"host":e.host,"user":e.user,"process":e.process,"message":text[:1600]})
     selected = candidates[:250]
