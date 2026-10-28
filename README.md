@@ -32,6 +32,10 @@ Open the local URL printed by Streamlit. Upload only authorized evidence. For fo
 
 EVTX files are parsed with `python-evtx` (`Evtx.Evtx`). If that dependency is unavailable or a file cannot be parsed, the application reports the failure rather than silently treating binary data as text. XML exports from Event Viewer are supported independently.
 
+## Development and tests
+
+Run the core tests with `python -m unittest discover -s tests -v`. GitHub Actions runs these tests on pushes and pull requests to `main`.
+
 ## Analysis notes
 
 The rules provide triage leads, not automatic proof of compromise. Findings are evidence-linked and should be corroborated with adjacent events, endpoint telemetry, and source context. Time normalization does not alter source artifacts.
