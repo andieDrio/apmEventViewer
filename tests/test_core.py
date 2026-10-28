@@ -1,6 +1,7 @@
 import unittest
+import xml.etree.ElementTree as ET
 
-from core import Event, assess, normalize_time, sha256, sniff_timestamp
+from core import Event, assess, normalize_time, sha256, sniff_timestamp, xml_event_to_event
 
 
 class CoreTests(unittest.TestCase):
@@ -26,6 +27,23 @@ class CoreTests(unittest.TestCase):
         payload = "php-cgi.exe spawned cmd.exe /c powershell"
         events = [Event("", "process.csv", "CSV", "row[2]", message=payload, raw=payload)]
         self.assertTrue(any(f.rule_id == "WEB-SHELL-CHILDPROC" and f.severity == "CRITICAL" for f in assess(events)))
+
+    def test_sysmon_xml_named_eventdata_fields_are_parsed(self):
+        xml = ET.fromstring("""<Event><System><Provider Name="Microsoft-Windows-Sysmon"/><EventID>1</EventID><TimeCreated SystemTime="2026-10-26T04:34:56.000Z"/><Computer>host01</Computer></System><EventData><Data Name="Image">C:\\Windows\\System32\\powershell.exe</Data><Data Name="CommandLine">powershell.exe -EncodedCommand ABCDEFGHIJKLMNOPQRSTUVWXYZ123456</Data><Data Name="ParentImage">C:\\Windows\\System32\\cmd.exe</Data></EventData></Event>""")
+        event = xml_event_to_event(xml, "Microsoft-Windows-Sysmon%4Operational.evtx", "digest", 1)
+        self.assertEqual(event.source_type, "SYSMON")
+        self.assertEqual(event.event_id, "1")
+        self.assertEqual(event.timestamp, "2026-10-26T12:34:56+08:00")
+        self.assertIn("CommandLine=powershell.exe", event.message)
+        self.assertIn("Image=C:\\Windows\\System32\\powershell.exe", event.message)
+
+    def test_sysmon_event_8_creates_dedicated_finding(self):
+        event = Event("2026-10-26T12:34:56+08:00", "sysmon.evtx", "SYSMON", "record[8]", event_id="8", provider="Microsoft-Windows-Sysmon", message="SourceImage=source.exe | TargetImage=target.exe", raw="Sysmon EventID 8")
+        self.assertTrue(any(f.rule_id == "SYSMON-EID-8" and f.severity == "HIGH" for f in assess([event])))
+
+    def test_sysmon_event_25_creates_dedicated_finding(self):
+        event = Event("", "sysmon.evtx", "SYSMON", "record[25]", event_id="25", provider="Microsoft-Windows-Sysmon", message="Image=unknown.exe", raw="ProcessTampering")
+        self.assertTrue(any(f.rule_id == "SYSMON-EID-25" for f in assess([event])))
 
     def test_no_finding_for_unmatched_benign_event(self):
         events = [Event("", "app.log", "LOG", "line[1]", message="Application started normally", raw="Application started normally")]
