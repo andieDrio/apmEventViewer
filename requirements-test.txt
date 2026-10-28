@@ -1,0 +1,2 @@
+# Minimal dependency set for unit tests of core.py
+# core.py uses only the Python standard library.
