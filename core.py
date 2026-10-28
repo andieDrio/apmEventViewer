@@ -194,3 +194,79 @@ def assess(events: list[Event]) -> list[Finding]:
     unique = {(finding.rule_id, finding.source_file, finding.location, finding.evidence): finding for finding in findings}
     order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
     return sorted(unique.values(), key=lambda finding: (order.get(finding.severity, 5), finding.timestamp, finding.source_file))
+
+def build_case_assessment(events: list[Event], findings: list[Finding]) -> dict[str, Any]:
+    """Build a deterministic, evidence-bounded assessment for UI and PDF reporting."""
+    severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
+    counts: dict[str, int] = {level: 0 for level in severity_order}
+    for finding in findings:
+        counts[finding.severity.upper()] = counts.get(finding.severity.upper(), 0) + 1
+
+    source_files = sorted({event.source_file for event in events if event.source_file})
+    finding_sources = {finding.source_file for finding in findings if finding.source_file}
+    sysmon_events = sum(1 for event in events if event.source_type.upper() == "SYSMON")
+    timestamped_events = sum(1 for event in events if event.timestamp)
+    critical_high = counts.get("CRITICAL", 0) + counts.get("HIGH", 0)
+
+    if counts.get("CRITICAL", 0):
+        activity_level = "Critical indicators present"
+    elif counts.get("HIGH", 0):
+        activity_level = "High-priority indicators present"
+    elif counts.get("MEDIUM", 0):
+        activity_level = "Moderate indicators present"
+    elif findings:
+        activity_level = "Low-priority indicators present"
+    else:
+        activity_level = "No enabled-rule matches"
+
+    # Confidence describes the breadth of rule-based support, not certainty of compromise.
+    confidence = "Moderate" if len(findings) >= 3 and len(finding_sources) >= 2 else "Limited"
+    facts = [
+        f"{len(events)} event records were parsed from {len(source_files)} distinct source file(s).",
+        f"{timestamped_events} of {len(events)} event records contain a normalized timestamp (UTC+08:00).",
+        f"{sysmon_events} parsed event record(s) were identified as Sysmon.",
+        f"Rule-based findings: {len(findings)} total; {counts.get('CRITICAL', 0)} Critical, {counts.get('HIGH', 0)} High, {counts.get('MEDIUM', 0)} Medium, {counts.get('LOW', 0)} Low, {counts.get('INFO', 0)} Info.",
+    ]
+
+    if findings:
+        top_titles = []
+        for finding in sorted(findings, key=lambda item: (severity_order.get(item.severity.upper(), 5), item.timestamp, item.source_file)):
+            label = f"{finding.severity}: {finding.title} ({finding.rule_id})"
+            if label not in top_titles:
+                top_titles.append(label)
+            if len(top_titles) == 5:
+                break
+        observations = top_titles
+        assessment = (
+            f"{activity_level}. Enabled triage rules matched {len(findings)} indicator(s) across "
+            f"{len(finding_sources)} source file(s). "
+            "These matches warrant validation against original records, process ancestry, adjacent events, "
+            "and other available telemetry; they do not independently establish malicious activity or confirm a compromise."
+        )
+        attention = [
+            "Prioritize Critical and High findings and preserve the referenced source records.",
+            "Validate timestamps, host/account context, process ancestry, and whether the recorded operation succeeded.",
+            "Correlate matching activity across independent logs and endpoint/network evidence before assigning an incident verdict.",
+        ]
+        if critical_high == 0:
+            attention[0] = "Review the highest-severity findings in context and preserve the referenced source records."
+    else:
+        observations = ["No records matched the currently enabled rule set."]
+        assessment = (
+            "No enabled-rule matches were identified in the parsed records. This result is not evidence that all activity was benign; "
+            "coverage depends on the supplied artifacts, available fields, and current detection rules."
+        )
+        attention = [
+            "Confirm the expected logs and time window were supplied and parsed successfully.",
+            "Review relevant records manually and expand detection coverage when the investigation hypothesis requires it.",
+        ]
+
+    return {
+        "activity_level": activity_level,
+        "confidence": confidence,
+        "facts": facts,
+        "observations": observations,
+        "assessment": assessment,
+        "analyst_attention": attention,
+        "basis": "Deterministic summary of parsed record counts, source coverage, timestamp coverage, Sysmon identification, and enabled rule matches. Confidence describes rule-correlation breadth only—not proof of compromise.",
+    }
