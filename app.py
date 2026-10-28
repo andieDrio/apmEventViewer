@@ -37,7 +37,7 @@ def parse_evtx(data: bytes, filename: str, digest: str) -> list[Event]:
                 raw=record.xml()
                 try: event=xml_event_to_event(ET.fromstring(raw),filename,digest,index)
                 except ET.ParseError: event=Event("",filename,"EVTX",f"record[{index}]",raw=raw,message=raw,sha256=digest)
-                event.source_type="EVTX"; event.location=f"record[{index}]"; result.append(event)
+                event.source_type="SYSMON" if "sysmon" in event.provider.lower() or "sysmon" in filename.lower() else "EVTX"; event.location=f"record[{index}]"; result.append(event)
         return result
     finally:
         try: os.unlink(path)
@@ -84,7 +84,7 @@ def pdf_report(events: list[Event], findings: list[Finding], case_name: str, ana
     story=[Paragraph("DIGITAL FORENSICS LOG ASSESSMENT",styles["Title"]),Paragraph(safe(case_name),styles["Heading2"]),Paragraph(f"Generated: {datetime.now(UTC8).strftime('%Y-%m-%d %H:%M:%S UTC+08:00')}",styles["Normal"]),Spacer(1,5*mm)]
     metrics=[["Events analyzed",str(len(events)),"Files",str(len(set(e.source_file for e in events))),"Findings",str(len(findings)),"Critical / High",str(counts.get("CRITICAL",0)+counts.get("HIGH",0))]]
     t=Table(metrics,colWidths=[28*mm,18*mm,14*mm,18*mm,18*mm,18*mm,28*mm,18*mm]); t.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),colors.HexColor("#EAF0F6")),("GRID",(0,0),(-1,-1),0.4,colors.HexColor("#B8C4D1")),("FONTNAME",(0,0),(-1,-1),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8),("PADDING",(0,0),(-1,-1),6)]))
-    story += [t,Paragraph("Scope and methodology",styles["Section"]),Paragraph("Uploaded EVTX, LOG/TXT, CSV, and XML artifacts were parsed into a normalized event timeline. Timestamps are displayed in UTC+08:00; timestamps without a source offset are assumed to represent local UTC+08:00. Rule-based detections are triage indicators and are not, by themselves, proof of compromise.",styles["BodyText"]),Paragraph("Assessment summary",styles["Section"])]
+    story += [t,Paragraph("Scope and methodology",styles["Section"]),Paragraph("Uploaded EVTX (including Sysmon), LOG/TXT, CSV, and XML artifacts were parsed into a normalized event timeline. Sysmon Event IDs 8, 10, and 25 receive dedicated triage context when identified. Timestamps are displayed in UTC+08:00; timestamps without a source offset are assumed to represent local UTC+08:00. Rule-based detections are triage indicators and are not, by themselves, proof of compromise.",styles["BodyText"]),Paragraph("Assessment summary",styles["Section"])]
     rows=[["Severity","Rule","Finding / rationale","Timestamp (UTC+08:00)","Source / location","Evidence"]]
     for f in findings: rows.append([Paragraph(safe(f.severity),styles["SmallCell"]),Paragraph(safe(f.rule_id),styles["SmallCell"]),Paragraph(safe(f.title)+"<br/>"+safe(f.rationale),styles["SmallCell"]),Paragraph(safe(f.timestamp),styles["SmallCell"]),Paragraph(safe(f.source_file)+"<br/>"+safe(f.location),styles["SmallCell"]),Paragraph(safe(f.evidence),styles["SmallCell"])])
     if len(rows)>1:
@@ -135,7 +135,7 @@ if events:
   else: st.info("No findings match current filters. This is not proof that the activity is benign.")
   chart=pd.DataFrame({"Severity":["CRITICAL","HIGH","MEDIUM","LOW","INFO"],"Count":[counts.get(x,0) for x in ["CRITICAL","HIGH","MEDIUM","LOW","INFO"]]}).set_index("Severity"); st.bar_chart(chart)
  with tab_timeline:
-  st.subheader("Normalized event timeline"); tdf=pd.DataFrame([{"Timestamp (UTC+08:00)":e.timestamp,"Type":e.source_type,"Level":e.level,"Event ID":e.event_id,"Host":e.host,"User":e.user,"Process":e.process,"Message":e.message[:2000],"Source file":e.source_file,"Location":e.location} for e in sorted(visible_events,key=lambda x:x.timestamp or "~")])
+  st.subheader("Normalized event timeline"); tdf=pd.DataFrame([{"Timestamp (UTC+08:00)":e.timestamp,"Type":e.source_type,"Provider":e.provider,"Level":e.level,"Event ID":e.event_id,"Host":e.host,"User":e.user,"Process":e.process,"Message":e.message[:2000],"Source file":e.source_file,"Location":e.location} for e in sorted(visible_events,key=lambda x:x.timestamp or "~")])
   if not tdf.empty:
    parsed=pd.to_datetime(tdf["Timestamp (UTC+08:00)"],errors="coerce",utc=True); dates=parsed.dropna()
    if not dates.empty:
