@@ -30,3 +30,18 @@ Analyze working copies and preserve original evidence. SHA-256 is calculated ove
 ## Dependencies
 
 Python 3.11+, `python-evtx`, and ReportLab. If Windows Application Control blocks any native extension, inspect Code Integrity logs and use an authorized policy correction rather than disabling security controls.
+
+
+## Optional OpenAI-assisted correlation
+
+Parsing and deterministic rule findings run locally. After local analysis completes, select **Run OpenAI analysis (send evidence)** to send a bounded set of suspicious-pattern event excerpts and rule findings to the OpenAI Responses API. The AI result appears in the dashboard and is included in the next generated PDF. It is an investigative aid, not proof; validate every claim against original artifacts. The report states how many event candidates and rule findings were sent, because the request is bounded and cannot guarantee detection of every malicious action.
+
+Set the key in the same PowerShell window used to start the server. Never put it in browser JavaScript or commit it to GitHub:
+
+```powershell
+$env:OPENAI_API_KEY = "YOUR_API_KEY"
+$env:OPENAI_MODEL = "gpt-5.4-mini" # optional; use a model enabled for your API project
+.\\.venv\\Scripts\\python.exe server.py
+```
+
+The API is called only when you press the AI-analysis button. API usage may incur separate charges. Without a key, local parsing, rule-based findings, CSV export, and PDF generation remain available. All report timestamps are labeled Philippine Standard Time (UTC+08:00).
