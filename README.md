@@ -5,7 +5,9 @@ A local-first digital forensics log viewer and assessment application for EVTX, 
 ## Features
 
 - Upload multiple forensic log artifacts in one case.
-- Parse Windows EVTX exports, text logs, CSV tables, and XML event logs.
+- Parse Windows EVTX exports (including Microsoft Sysmon Operational logs), text logs, CSV tables, and XML event logs.
+- Extract Sysmon provider, Event ID, UTC timestamp, computer, and named EventData fields such as Image, CommandLine, ParentImage, hashes, network endpoints, and target process details when present.
+- Add dedicated triage findings for Sysmon Event IDs 8 (CreateRemoteThread), 10 (ProcessAccess), and 25 (ProcessTampering), alongside general command-line, web-shell, credential-access, persistence, and discovery rules.
 - Normalize events into a searchable chronological timeline.
 - Rule-based triage for suspicious process execution, PowerShell, account activity, persistence, web-shell indicators, and discovery commands.
 - Correlate events across uploaded sources and preserve source filename, line/record, timestamp, and original event details.
@@ -38,7 +40,7 @@ Run the core tests with `python -m unittest discover -s tests -v`. GitHub Action
 
 ## Analysis notes
 
-The rules provide triage leads, not automatic proof of compromise. Findings are evidence-linked and should be corroborated with adjacent events, endpoint telemetry, and source context. Time normalization does not alter source artifacts.
+Sysmon events are identified from the provider name or Sysmon filename when available. Event IDs 8, 10, and 25 receive dedicated context; other Sysmon records are normalized and analyzed by the general rules. A Sysmon event alone is not proof of malicious activity. The rules provide triage leads, not automatic proof of compromise. Findings are evidence-linked and should be corroborated with adjacent events, endpoint telemetry, and source context. Time normalization does not alter source artifacts.
 
 ## Security and privacy
 
