@@ -11,7 +11,7 @@ A local-first digital forensics log viewer and assessment application for EVTX, 
 - Normalize events into a searchable chronological timeline.
 - Rule-based triage for suspicious process execution, PowerShell, account activity, persistence, web-shell indicators, and discovery commands.
 - Correlate events across uploaded sources and preserve source filename, line/record, timestamp, and original event details.
-- Export normalized events as CSV and generate a case assessment PDF.
+- Export normalized events and findings as CSV, and generate an evidence-based case assessment PDF with activity level, rule-correlation confidence, facts, observations, assessment narrative, analyst attention items, evidence-linked findings, and a timestamped event timeline.
 - Uses Philippine Standard Time (UTC+08:00) for displayed timestamps; preserves the original timestamp when a source offset is known.
 
 ## Requirements
@@ -40,7 +40,7 @@ Run the core tests with `python -m unittest discover -s tests -v`. GitHub Action
 
 ## Analysis notes
 
-Sysmon events are identified from the provider name or Sysmon filename when available. Event IDs 8, 10, and 25 receive dedicated context; other Sysmon records are normalized and analyzed by the general rules. A Sysmon event alone is not proof of malicious activity. The rules provide triage leads, not automatic proof of compromise. Findings are evidence-linked and should be corroborated with adjacent events, endpoint telemetry, and source context. Time normalization does not alter source artifacts.
+Sysmon events are identified from the provider name or Sysmon filename when available. Event IDs 8, 10, and 25 receive dedicated context; other Sysmon records are normalized and analyzed by the general rules. A Sysmon event alone is not proof of malicious activity. The rules provide triage leads, not automatic proof of compromise. The case assessment is generated deterministically from parsed record counts, source coverage, timestamp coverage, Sysmon identification, and enabled rule matches. Its confidence label describes rule-correlation breadth only, not certainty of compromise. Findings are evidence-linked and should be corroborated with adjacent events, endpoint telemetry, and source context. A report with no rule matches does not establish that activity was benign. Time normalization does not alter source artifacts.
 
 ## Security and privacy
 
