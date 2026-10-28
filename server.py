@@ -95,6 +95,23 @@ def pdf_report(events,findings,case_name,notes,ai_analysis=None):
     def footer(canvas,document):
         canvas.saveState();canvas.setFont("Helvetica",7);canvas.setFillColor(colors.grey);canvas.drawString(12*mm,7*mm,"apmEventViewer | Philippine Standard Time (UTC+08:00) | CONFIDENTIAL");canvas.drawRightString(landscape(A4)[0]-12*mm,7*mm,f"Page {document.page}");canvas.restoreState()
     doc.build(story,onFirstPage=footer,onLaterPages=footer);return buf.getvalue()
+def build_puter_evidence(events, findings):
+    pattern = re.compile(r"(?i)(powershell|pwsh|cmd|php-cgi|web.?shell|\\.env|frombase64string|encodedcommand|writeallbytes|move_uploaded_file|file_put_contents|schtasks|localgroup|netstat|wevtutil|4625|4624|4720|4728|4732|4697|7045|sysmon)")
+    secret_pattern = re.compile(r"(?i)(password|passwd|api[_-]?key|secret|token)\\s*[:=]\\s*[^\\s,;]+")
+    candidates = []
+    for e in events:
+        text = " ".join((e.message, e.raw, e.process, e.provider, e.event_id))
+        text = secret_pattern.sub(lambda m: m.group(1) + "=[REDACTED]", text)
+        if pattern.search(text):
+            candidates.append({"timestamp":e.timestamp,"source_file":e.source_file,"location":e.location,"source_type":e.source_type,"event_id":e.event_id,"level":e.level,"provider":e.provider,"host":e.host,"user":e.user,"process":e.process,"message":text[:1600]})
+    selected = candidates[:250]
+    rule_rows = []
+    for f in findings[:300]:
+        evidence = secret_pattern.sub(lambda m: m.group(1) + "=[REDACTED]", f.evidence[:1200])
+        rule_rows.append({"severity":f.severity,"rule_id":f.rule_id,"title":f.title,"rationale":f.rationale,"evidence":evidence,"source_file":f.source_file,"location":f.location,"timestamp":f.timestamp})
+    coverage = "Events parsed: {0}; suspicious-pattern candidates sent: {1}/{2}; rule findings sent: {3}/{4}.".format(len(events),len(selected),len(candidates),len(rule_rows),len(findings))
+    return {"evidence":{"events":selected,"findings":rule_rows,"event_candidates_found":len(candidates),"event_candidates_sent":len(selected),"rule_findings_total":len(findings),"rule_findings_sent":len(rule_rows),"total_events":len(events)},"coverage":coverage}
+
 def openai_analyze(events, findings):
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not api_key:
@@ -165,7 +182,7 @@ class Handler(BaseHTTPRequestHandler):
     def json(self,status,obj):self.send_data(status,json.dumps(obj,ensure_ascii=False).encode(), "application/json; charset=utf-8")
     def do_GET(self):
         path=urlparse(self.path).path
-        if path=="/api/health":return self.json(200,{"status":"ok","aiConfigured":bool(os.environ.get("OPENAI_API_KEY","").strip())})
+        if path=="/api/health":return self.json(200,{"status":"ok","aiProvider":"Puter.js"})
         if path=="/":return self.send_data(200,(ROOT/"web"/"index.html").read_bytes(),"text/html; charset=utf-8")
         parts=path.strip("/").split("/")
         if len(parts)==3 and parts[:2]==["api","jobs"]:
@@ -195,13 +212,28 @@ class Handler(BaseHTTPRequestHandler):
                 if job.get("status")!="complete":return self.json(409,{"error":"Local analysis must finish before AI analysis"})
                 events=[Event(**x) for x in job.get("events",[])]
                 findings=[Finding(**x) for x in job.get("findings",[])]
+            return self.json(200,build_puter_evidence(events,findings))
+        if len(parts)==4 and parts[:2]==["api","jobs"] and parts[3]=="ai-result":
+            length=int(self.headers.get("Content-Length","0"))
+            if length<=0 or length>2*1024*1024:return self.json(413,{"error":"AI result must be 1 byte to 2 MiB"})
             try:
-                result=openai_analyze(events,findings)
-                with LOCK:JOBS[parts[2]]["aiAnalysis"]=result;JOBS[parts[2]]["aiStatus"]="complete"
+                payload=json.loads(self.rfile.read(length).decode("utf-8"));result=payload.get("aiAnalysis")
+                if not isinstance(result,dict):raise ValueError("aiAnalysis must be an object")
+                for key in ("malicious_activities","correlations","gaps","recommendations"):
+                    if not isinstance(result.get(key),list):result[key]=[]
+                    result[key]=[str(x)[:4000] for x in result[key][:100]]
+                result["executive_summary"]=str(result.get("executive_summary",""))[:12000]
+                result["confidence"]=str(result.get("confidence","Not stated"))[:500]
+                result["model"]=str(result.get("model","Puter.js AI"))[:120]
+                result["generated_at"]=datetime.now(UTC8).strftime("%Y-%m-%d %H:%M:%S Philippine Standard Time (UTC+08:00)")
+                result["coverage"]=str(result.get("coverage","Selected suspicious evidence subset"))[:1000]
+                with LOCK:
+                    job=JOBS.get(parts[2])
+                    if not job:return self.json(404,{"error":"Job not found"})
+                    if job.get("status")!="complete":return self.json(409,{"error":"Local analysis must finish before AI results are saved"})
+                    job["aiAnalysis"]=result;job["aiStatus"]="complete"
                 return self.json(200,{"aiAnalysis":result})
-            except Exception as exc:
-                with LOCK:JOBS[parts[2]]["aiStatus"]="error";JOBS[parts[2]]["aiError"]=str(exc)
-                return self.json(502,{"error":str(exc)})
+            except Exception as exc:return self.json(400,{"error":str(exc)})
         if route!="/api/analyze":return self.json(404,{"error":"Not found"})
         length=int(self.headers.get("Content-Length","0"))
         if length<=0 or length>MAX_BODY:return self.json(413,{"error":"Request must be 1 byte to 120 MiB"})
