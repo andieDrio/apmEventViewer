@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 import pandas as pd
 import streamlit as st
 
-from core import Event, Finding, assess, event_from_row, sha256, sniff_timestamp, xml_event_to_event
+from core import Event, Finding, assess, build_case_assessment, event_from_row, sha256, sniff_timestamp, xml_event_to_event
 
 try:
     from Evtx.Evtx import Evtx
@@ -84,7 +84,16 @@ def pdf_report(events: list[Event], findings: list[Finding], case_name: str, ana
     story=[Paragraph("DIGITAL FORENSICS LOG ASSESSMENT",styles["Title"]),Paragraph(safe(case_name),styles["Heading2"]),Paragraph(f"Generated: {datetime.now(UTC8).strftime('%Y-%m-%d %H:%M:%S UTC+08:00')}",styles["Normal"]),Spacer(1,5*mm)]
     metrics=[["Events analyzed",str(len(events)),"Files",str(len(set(e.source_file for e in events))),"Findings",str(len(findings)),"Critical / High",str(counts.get("CRITICAL",0)+counts.get("HIGH",0))]]
     t=Table(metrics,colWidths=[28*mm,18*mm,14*mm,18*mm,18*mm,18*mm,28*mm,18*mm]); t.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),colors.HexColor("#EAF0F6")),("GRID",(0,0),(-1,-1),0.4,colors.HexColor("#B8C4D1")),("FONTNAME",(0,0),(-1,-1),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8),("PADDING",(0,0),(-1,-1),6)]))
-    story += [t,Paragraph("Scope and methodology",styles["Section"]),Paragraph("Uploaded EVTX (including Sysmon), LOG/TXT, CSV, and XML artifacts were parsed into a normalized event timeline. Sysmon Event IDs 8, 10, and 25 receive dedicated triage context when identified. Timestamps are displayed in UTC+08:00; timestamps without a source offset are assumed to represent local UTC+08:00. Rule-based detections are triage indicators and are not, by themselves, proof of compromise.",styles["BodyText"]),Paragraph("Assessment summary",styles["Section"])]
+    story += [t,Paragraph("Scope and methodology",styles["Section"]),Paragraph("Uploaded EVTX (including Sysmon), LOG/TXT, CSV, and XML artifacts were parsed into a normalized event timeline. Sysmon Event IDs 8, 10, and 25 receive dedicated triage context when identified. Timestamps are displayed in UTC+08:00; timestamps without a source offset are assumed to represent local UTC+08:00. Rule-based detections are triage indicators and are not, by themselves, proof of compromise.",styles["BodyText"]),Paragraph("Evidence-based case assessment",styles["Section"])]
+    case_assessment = build_case_assessment(events, findings)
+    story.append(Paragraph("<b>Activity level:</b> " + safe(case_assessment["activity_level"]) + " &nbsp;&nbsp; <b>Assessment confidence (rule-correlation breadth):</b> " + safe(case_assessment["confidence"]),styles["BodyText"]))
+    story.append(Spacer(1,2*mm))
+    story.append(Paragraph("<b>Assessment:</b> " + safe(case_assessment["assessment"]),styles["BodyText"]))
+    for section_title, items in (("Facts", case_assessment["facts"]), ("Observations", case_assessment["observations"]), ("Analyst attention", case_assessment["analyst_attention"])):
+        story.append(Paragraph(section_title, styles["Heading3"]))
+        story.append(Paragraph("<br/>".join("• " + safe(item) for item in items), styles["BodyText"]))
+    story.append(Paragraph("<i>Assessment basis:</i> " + safe(case_assessment["basis"]), styles["SmallCell"]))
+    story.append(Paragraph("Finding details",styles["Section"]))
     rows=[["Severity","Rule","Finding / rationale","Timestamp (UTC+08:00)","Source / location","Evidence"]]
     for f in findings: rows.append([Paragraph(safe(f.severity),styles["SmallCell"]),Paragraph(safe(f.rule_id),styles["SmallCell"]),Paragraph(safe(f.title)+"<br/>"+safe(f.rationale),styles["SmallCell"]),Paragraph(safe(f.timestamp),styles["SmallCell"]),Paragraph(safe(f.source_file)+"<br/>"+safe(f.location),styles["SmallCell"]),Paragraph(safe(f.evidence),styles["SmallCell"])])
     if len(rows)>1:
@@ -127,7 +136,20 @@ if events:
  c1,c2,c3,c4,c5=st.columns(5); c1.metric("Events parsed",f"{len(events):,}"); c2.metric("Evidence files",len(set(e.source_file for e in events))); c3.metric("Critical findings",counts.get("CRITICAL",0)); c4.metric("High findings",counts.get("HIGH",0)); c5.metric("Medium findings",counts.get("MEDIUM",0)); st.divider()
  tab_findings,tab_timeline,tab_sources,tab_export=st.tabs(["Assessment","Timeline","Evidence manifest","Export & report"])
  with tab_findings:
-  st.subheader("Rule-based assessment"); st.caption("Detections are investigative leads. Validate context, adjacent events, and successful execution before assigning a verdict.")
+  st.subheader("Evidence-based case assessment"); st.caption("Assessment is generated deterministically from parsed evidence and enabled rule matches. It is a triage conclusion, not an automatic incident verdict.")
+  case_assessment=build_case_assessment(events,findings)
+  st.markdown(f"**Activity level:** {case_assessment['activity_level']} &nbsp; · &nbsp; **Assessment confidence (rule-correlation breadth):** {case_assessment['confidence']}")
+  st.info(case_assessment["assessment"])
+  with st.expander("Assessment basis: facts, observations, and analyst attention", expanded=True):
+   st.markdown("**Facts**")
+   for item in case_assessment["facts"]: st.markdown(f"- {item}")
+   st.markdown("**Observations**")
+   for item in case_assessment["observations"]: st.markdown(f"- {item}")
+   st.markdown("**Analyst attention**")
+   for item in case_assessment["analyst_attention"]: st.markdown(f"- {item}")
+   st.caption(case_assessment["basis"])
+  st.divider()
+  st.subheader("Finding details and evidence references"); st.caption("Detections are investigative leads. Validate context, adjacent events, and successful execution before assigning a verdict.")
   if visible_findings:
    fdf=pd.DataFrame([asdict(f) for f in visible_findings]).rename(columns={"severity":"Severity","title":"Finding","rule_id":"Rule ID","timestamp":"Timestamp (UTC+08:00)","source_file":"Source file","location":"Evidence location","evidence":"Matched evidence","rationale":"Assessment rationale"}); st.dataframe(fdf[["Severity","Rule ID","Finding","Timestamp (UTC+08:00)","Source file","Evidence location","Matched evidence","Assessment rationale"]],use_container_width=True,hide_index=True,height=420)
    with st.expander("Finding details and evidence references"):
