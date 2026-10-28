@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import Any, Iterable
 UTC8 = timezone(timedelta(hours=8), name="UTC+08:00")
-TIMESTAMP_PATTERNS = [re.compile(r"(?P<ts>\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:?\\d{2})?)"), re.compile(r"(?P<ts>\\d{2}/\\d{2}/\\d{4}[ T]\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?)"), re.compile(r"(?P<ts>\\w{3}\\s+\\d{1,2}\\s+\\d{2}:\\d{2}:\\d{2}(?:\\s+\\d{4})?)")]
+TIMESTAMP_PATTERNS = [re.compile(r"(?P<ts>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)"), re.compile(r"(?P<ts>\d{2}/\d{2}/\d{4}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?)"), re.compile(r"(?P<ts>\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}(?:\s+\d{4})?)")]
 @dataclass
 class Event:
  timestamp:str; source_file:str; source_type:str; location:str; event_id:str=""; level:str="INFO"; provider:str=""; host:str=""; user:str=""; process:str=""; message:str=""; raw:str=""; sha256:str=""
