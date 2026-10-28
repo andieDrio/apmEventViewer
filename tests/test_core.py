@@ -1,7 +1,7 @@
 import unittest
 import xml.etree.ElementTree as ET
 
-from core import Event, assess, normalize_time, sha256, sniff_timestamp, xml_event_to_event
+from core import Event, assess, build_case_assessment, normalize_time, sha256, sniff_timestamp, xml_event_to_event
 
 
 class CoreTests(unittest.TestCase):
@@ -48,6 +48,25 @@ class CoreTests(unittest.TestCase):
     def test_no_finding_for_unmatched_benign_event(self):
         events = [Event("", "app.log", "LOG", "line[1]", message="Application started normally", raw="Application started normally")]
         self.assertEqual(assess(events), [])
+
+    def test_case_assessment_reports_rule_matches_and_limits_conclusion(self):
+        events = [
+            Event("2026-10-26T12:34:56+08:00", "web.log", "LOG", "line[1]", message="php-cgi.exe spawned cmd.exe /c powershell", raw="php-cgi.exe spawned cmd.exe /c powershell"),
+            Event("2026-10-26T12:35:00+08:00", "sysmon.evtx", "SYSMON", "record[2]", event_id="8", provider="Microsoft-Windows-Sysmon", message="CreateRemoteThread", raw="CreateRemoteThread"),
+        ]
+        findings = assess(events)
+        summary = build_case_assessment(events, findings)
+        self.assertIn("indicators present", summary["activity_level"])
+        self.assertIn("do not independently establish", summary["assessment"])
+        self.assertEqual(len(summary["facts"]), 4)
+        self.assertTrue(summary["analyst_attention"])
+
+    def test_case_assessment_without_matches_does_not_claim_benign_activity(self):
+        events = [Event("", "app.log", "LOG", "line[1]", message="Application started normally", raw="Application started normally")]
+        summary = build_case_assessment(events, assess(events))
+        self.assertEqual(summary["activity_level"], "No enabled-rule matches")
+        self.assertIn("not evidence that all activity was benign", summary["assessment"])
+        self.assertEqual(summary["confidence"], "Limited")
 
 
 if __name__ == "__main__":
