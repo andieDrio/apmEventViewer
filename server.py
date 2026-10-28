@@ -96,8 +96,8 @@ def pdf_report(events,findings,case_name,notes,ai_analysis=None):
         canvas.saveState();canvas.setFont("Helvetica",7);canvas.setFillColor(colors.grey);canvas.drawString(12*mm,7*mm,"apmEventViewer | Philippine Standard Time (UTC+08:00) | CONFIDENTIAL");canvas.drawRightString(landscape(A4)[0]-12*mm,7*mm,f"Page {document.page}");canvas.restoreState()
     doc.build(story,onFirstPage=footer,onLaterPages=footer);return buf.getvalue()
 def build_puter_evidence(events, findings):
-    pattern = re.compile(r"(?i)(powershell|pwsh|cmd|php-cgi|web.?shell|\\.env|frombase64string|encodedcommand|writeallbytes|move_uploaded_file|file_put_contents|schtasks|localgroup|netstat|wevtutil|4625|4624|4720|4728|4732|4697|7045|sysmon)")
-    secret_pattern = re.compile(r"(?i)(password|passwd|api[_-]?key|secret|token)\\s*[:=]\\s*[^\\s,;]+")
+    pattern = re.compile(r"(?i)(powershell|pwsh|cmd|php-cgi|web.?shell|\.env|frombase64string|encodedcommand|writeallbytes|move_uploaded_file|file_put_contents|schtasks|localgroup|netstat|wevtutil|4625|4624|4720|4728|4732|4697|7045|sysmon)")
+    secret_pattern = re.compile(r"(?i)(password|passwd|api[_-]?key|secret|token)\s*[:=]\s*[^\s,;]+")
     candidates = []
     for e in events:
         text = " ".join((e.message, e.raw, e.process, e.provider, e.event_id))
