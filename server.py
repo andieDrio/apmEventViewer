@@ -37,6 +37,24 @@ def parse_evtx(data,name,digest,progress=None):
     finally:
         try:os.unlink(path)
         except OSError:pass
+def _flatten_json_record(value):
+    """Flatten nested JSON event records to field names understood by event_from_row."""
+    flattened={}
+    def visit(item):
+        if isinstance(item,dict):
+            for key,val in item.items():
+                if isinstance(val,dict):
+                    visit(val)
+                elif isinstance(val,list):
+                    if all(not isinstance(entry,(dict,list)) for entry in val):
+                        flattened[str(key)]= ", ".join(str(entry) for entry in val)
+                    else:
+                        for entry in val: visit(entry)
+                else:
+                    flattened[str(key)]=val
+    visit(value)
+    return flattened or value
+
 def parse_upload(name,data,progress=None):
     ext=Path(name).suffix.lower(); digest=sha256(data)
     if ext==".evtx":return parse_evtx(data,name,digest,progress)
@@ -48,6 +66,20 @@ def parse_upload(name,data,progress=None):
     if ext==".csv":
         rows=csv.DictReader(io.StringIO(decode_text(data)))
         return [event_from_row(row,name,"CSV",f"row[{i}]",digest) for i,row in enumerate(rows,2)]
+    if ext==".json":
+        payload=json.loads(decode_text(data))
+        if isinstance(payload,dict):
+            for key in ("events","records","items","data"):
+                if isinstance(payload.get(key),list):
+                    payload=payload[key]
+                    break
+            else:
+                payload=[payload]
+        if not isinstance(payload,list) or not payload:
+            raise ValueError("JSON evidence must be an object or a non-empty array of event objects.")
+        if any(not isinstance(item,dict) for item in payload):
+            raise ValueError("JSON evidence array must contain only objects.")
+        return [event_from_row(_flatten_json_record(row),name,"JSON",f"item[{i}]",digest) for i,row in enumerate(payload,1)]
     if ext in {".log",".txt"}:
         out=[]
         for i,line in enumerate(decode_text(data).splitlines(),1):
@@ -56,6 +88,7 @@ def parse_upload(name,data,progress=None):
             out.append(Event(sniff_timestamp(line),name,"LOG",f"line[{i}]",level=m.group(1).upper() if m else "INFO",message=line.strip(),raw=line.strip(),sha256=digest))
         return out
     raise ValueError("Unsupported file type: "+ext)
+
 def pdf_report(events,findings,case_name,notes,ai_analysis=None):
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4,landscape
@@ -139,8 +172,12 @@ class Handler(BaseHTTPRequestHandler):
     def json(self,status,obj):self.send_data(status,json.dumps(obj,ensure_ascii=False).encode(), "application/json; charset=utf-8")
     def do_GET(self):
         path=urlparse(self.path).path
-        if path=="/api/health":return self.json(200,{"status":"ok","aiProvider":"Puter.js"})
+        if path=="/api/health":return self.json(200,{"status":"ok","aiProvider":"Puter.js","mcpAdapter":"separate stdio server"})
         if path=="/":return self.send_data(200,(ROOT/"web"/"index.html").read_bytes(),"text/html; charset=utf-8")
+        if path=="/api/jobs":
+            with LOCK:
+                jobs=[{"id":jid,"status":job.get("status","unknown"),"progress":job.get("progress",0),"message":job.get("message",""),"caseName":job.get("caseName",""),"eventCount":job.get("eventCount",0),"findingCount":job.get("findingCount",0),"files_total":job.get("files_total",0)} for jid,job in reversed(list(JOBS.items()))]
+            return self.json(200,{"count":len(jobs),"jobs":jobs[:100]})
         parts=path.strip("/").split("/")
         if len(parts)==3 and parts[:2]==["api","jobs"]:
             with LOCK:job=dict(JOBS.get(parts[2],{}))
@@ -199,7 +236,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(files,list) or not files:raise ValueError("Upload at least one file")
             if len(files)>25:raise ValueError("Maximum 25 files per analysis")
             for item in files:
-                if os.path.splitext(os.path.basename(str(item.get("name",""))))[1].lower() not in {".evtx",".log",".txt",".csv",".xml"}:raise ValueError("Unsupported file type: "+str(item.get("name")))
+                if os.path.splitext(os.path.basename(str(item.get("name",""))))[1].lower() not in {".evtx",".log",".txt",".csv",".xml",".json"}:raise ValueError("Unsupported file type: "+str(item.get("name")))
             case=str(payload.get("caseName") or "Log Investigation")[:200];notes=str(payload.get("analystNotes") or "")[:10000]
         except Exception as exc:return self.json(400,{"error":str(exc)})
         jid=uuid.uuid4().hex
