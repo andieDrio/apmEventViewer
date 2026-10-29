@@ -228,7 +228,8 @@ class Handler(BaseHTTPRequestHandler):
                 if candidate_time is None:continue
                 delta=abs((candidate_time-base_time).total_seconds())
                 if delta>window*60:continue
-                summary={key:candidate.get(key,"") for key in ("timestamp","source_file","location","event_id","level","provider","host","user","process","message")}
+                summary={key:candidate.get(key,"") for key in ("timestamp","source_file","location","event_id","level","provider","host","user","process")}
+                summary["message"]=str(candidate.get("message",""))[:1200]
                 summary["event_ref"]=_event_ref(candidate_index);summary["shared_attributes"]=shared;summary["delta_seconds"]=round(delta,3)
                 matches.append(summary)
             matches.sort(key=lambda item:item["delta_seconds"])
@@ -255,16 +256,21 @@ class Handler(BaseHTTPRequestHandler):
                     searchable=" ".join(str(event.get(key,"")) for key in ("timestamp","source_file","location","source_type","event_id","level","provider","host","user","process","message"))
                     if q and q not in searchable.casefold():continue
                     row={key:event.get(key,"") for key in ("timestamp","source_file","location","source_type","event_id","level","provider","host","user","process","message","sha256")}
+                    row["message"]=str(event.get("message",""))[:1200];row["message_truncated"]=len(str(event.get("message",""))) > 1200
                     row["event_ref"]=_event_ref(index);filtered.append(row)
                 limit=_bounded_int(query.get("limit",["50"])[0],50,1,100);offset=_bounded_int(query.get("offset",["0"])[0],0,0,10000000)
                 return self.json(200,{"total":len(filtered),"offset":offset,"limit":limit,"events":filtered[offset:offset+limit]})
             if route=="findings":
                 findings=job.get("findings",[]);severity=query.get("severity",[""])[0].upper().strip();filtered=[]
+                event_refs_by_location={}
+                for event_index,event in enumerate(job.get("events",[])):
+                    key=(event.get("source_file"),event.get("location"))
+                    event_refs_by_location.setdefault(key,[]).append(_event_ref(event_index))
                 for index,finding in enumerate(findings):
                     if severity and str(finding.get("severity","")).upper()!=severity:continue
                     row={key:finding.get(key,"") for key in ("severity","rule_id","title","rationale","evidence","source_file","location","timestamp")}
                     row["finding_ref"]=f"FND-{index+1:06d}"
-                    row["supporting_event_refs"]=[_event_ref(event_index) for event_index,event in enumerate(job.get("events",[])) if event.get("source_file")==finding.get("source_file") and event.get("location")==finding.get("location")]
+                    row["supporting_event_refs"]=event_refs_by_location.get((finding.get("source_file"),finding.get("location")),[])
                     filtered.append(row)
                 limit=_bounded_int(query.get("limit",["50"])[0],50,1,100);offset=_bounded_int(query.get("offset",["0"])[0],0,0,10000000)
                 return self.json(200,{"total":len(filtered),"offset":offset,"limit":limit,"findings":filtered[offset:offset+limit]})
