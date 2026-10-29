@@ -5,7 +5,7 @@ from dataclasses import asdict
 from datetime import datetime,timedelta,timezone
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs,urlparse
 from core import Event,Finding,assess,build_case_assessment,event_from_row,sha256,sniff_timestamp,xml_event_to_event
 try:
     from Evtx.Evtx import Evtx
@@ -163,6 +163,22 @@ def worker(jid,files,case,notes):
         with LOCK:JOBS[jid].update(progress=int((i+1)/max(len(files),1)*90),files_done=i+1,files_total=len(files),message=f"Processed {i+1}/{len(files)}: {name}",manifest=manifest.copy(),errors=errors.copy())
     findings=assess(events);assessment=build_case_assessment(events,findings)
     with LOCK:JOBS[jid].update(status="complete",progress=100,message="Analysis complete",events=[asdict(e) for e in events],findings=[asdict(f) for f in findings],assessment=assessment,manifest=manifest,errors=errors,caseName=case,analystNotes=notes,eventCount=len(events),findingCount=len(findings))
+def _event_ref(index):
+    return f"EV-{index+1:06d}"
+
+def _parse_event_time(value):
+    try:
+        parsed=datetime.fromisoformat(str(value).strip().replace("Z","+00:00"))
+        if parsed.tzinfo is None:return None
+        return parsed.astimezone(timezone.utc)
+    except (TypeError,ValueError,OverflowError):
+        return None
+
+def _bounded_int(value,default,minimum,maximum):
+    try:number=int(value)
+    except (TypeError,ValueError):number=default
+    return max(minimum,min(maximum,number))
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,fmt,*args):print(datetime.now(UTC8).strftime("[%H:%M:%S] ")+fmt%args)
     def send_data(self,status,data,ctype,headers=None):
@@ -171,7 +187,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers();self.wfile.write(data)
     def json(self,status,obj):self.send_data(status,json.dumps(obj,ensure_ascii=False).encode(), "application/json; charset=utf-8")
     def do_GET(self):
-        path=urlparse(self.path).path
+        parsed_url=urlparse(self.path);path=parsed_url.path
         if path=="/api/health":return self.json(200,{"status":"ok","aiProvider":"Puter.js","mcpAdapter":"separate stdio server"})
         if path=="/":return self.send_data(200,(ROOT/"web"/"index.html").read_bytes(),"text/html; charset=utf-8")
         if path=="/api/jobs":
@@ -179,18 +195,87 @@ class Handler(BaseHTTPRequestHandler):
                 jobs=[{"id":jid,"status":job.get("status","unknown"),"progress":job.get("progress",0),"message":job.get("message",""),"caseName":job.get("caseName",""),"eventCount":job.get("eventCount",0),"findingCount":job.get("findingCount",0),"files_total":job.get("files_total",0)} for jid,job in reversed(list(JOBS.items()))]
             return self.json(200,{"count":len(jobs),"jobs":jobs[:100]})
         parts=path.strip("/").split("/")
+        if len(parts)==5 and parts[:2]==["api","jobs"] and parts[3]=="events":
+            with LOCK:job=JOBS.get(parts[2])
+            if not job:return self.json(404,{"error":"Job not found"})
+            if job.get("status")!="complete":return self.json(409,{"error":"Analysis is not complete"})
+            match=re.fullmatch(r"EV-(\d{6,})",parts[4],re.IGNORECASE)
+            if not match:return self.json(400,{"error":"Invalid event reference"})
+            index=int(match.group(1))-1;events=job.get("events",[])
+            if index<0 or index>=len(events):return self.json(404,{"error":"Event reference not found"})
+            event=dict(events[index]);truncated=[]
+            for field in ("message","raw"):
+                if len(str(event.get(field,""))) > 20000:
+                    event[field]=str(event[field])[:20000];truncated.append(field)
+            return self.json(200,{"event_ref":_event_ref(index),"event":event,"truncated_fields":truncated})
+        if len(parts)==5 and parts[:2]==["api","jobs"] and parts[3]=="correlations":
+            with LOCK:job=JOBS.get(parts[2])
+            if not job:return self.json(404,{"error":"Job not found"})
+            if job.get("status")!="complete":return self.json(409,{"error":"Analysis is not complete"})
+            match=re.fullmatch(r"EV-(\d{6,})",parts[4],re.IGNORECASE)
+            if not match:return self.json(400,{"error":"Invalid event reference"})
+            events=job.get("events",[]);index=int(match.group(1))-1
+            if index<0 or index>=len(events):return self.json(404,{"error":"Event reference not found"})
+            base=events[index];base_time=_parse_event_time(base.get("timestamp",""))
+            query=parse_qs(parsed_url.query);window=_bounded_int(query.get("window_minutes",["10"])[0],10,1,1440);limit=_bounded_int(query.get("limit",["20"])[0],20,1,100)
+            if base_time is None:return self.json(200,{"event_ref":_event_ref(index),"matches":[],"warning":"The selected event has no parseable timezone-aware timestamp; time-window correlation was not performed."})
+            attributes=("host","user","process");matches=[]
+            for candidate_index,candidate in enumerate(events):
+                if candidate_index==index:continue
+                shared=[key for key in attributes if str(base.get(key,"")).strip() and str(candidate.get(key,"")).strip() and str(base.get(key,"")).casefold()==str(candidate.get(key,"")).casefold()]
+                if not shared:continue
+                candidate_time=_parse_event_time(candidate.get("timestamp",""))
+                if candidate_time is None:continue
+                delta=abs((candidate_time-base_time).total_seconds())
+                if delta>window*60:continue
+                summary={key:candidate.get(key,"") for key in ("timestamp","source_file","location","event_id","level","provider","host","user","process","message")}
+                summary["event_ref"]=_event_ref(candidate_index);summary["shared_attributes"]=shared;summary["delta_seconds"]=round(delta,3)
+                matches.append(summary)
+            matches.sort(key=lambda item:item["delta_seconds"])
+            return self.json(200,{"event_ref":_event_ref(index),"window_minutes":window,"matches":matches[:limit],"total_matches":len(matches),"interpretation":"Candidate relationships based on shared host/user/process and time proximity; not proof of causation."})
         if len(parts)==3 and parts[:2]==["api","jobs"]:
             with LOCK:job=dict(JOBS.get(parts[2],{}))
             if not job:return self.json(404,{"error":"Job not found"})
             job.pop("events",None);job.pop("findings",None);return self.json(200,job)
         if len(parts)==4 and parts[:2]==["api","jobs"]:
-            with LOCK:job=dict(JOBS.get(parts[2],{}))
+            with LOCK:job=JOBS.get(parts[2])
             if not job:return self.json(404,{"error":"Job not found"})
             if job.get("status")!="complete":return self.json(409,{"error":"Analysis is not complete"})
-            if parts[3]=="results":
-                job={k:job.get(k) for k in ("caseName","analystNotes","events","findings","assessment","manifest","errors","eventCount","findingCount","aiAnalysis")}
-                return self.json(200,job)
-            if parts[3]=="report.pdf":
+            route=parts[3];query=parse_qs(parsed_url.query)
+            if route=="events":
+                events=job.get("events",[]);filtered=[]
+                q=query.get("q",[""])[0].casefold().strip();event_id=query.get("event_id",[""])[0].casefold().strip();source_file=query.get("source_file",[""])[0].casefold().strip()
+                host=query.get("host",[""])[0].casefold().strip();user=query.get("user",[""])[0].casefold().strip();process=query.get("process",[""])[0].casefold().strip()
+                for index,event in enumerate(events):
+                    if event_id and str(event.get("event_id","")).casefold()!=event_id:continue
+                    if source_file and source_file not in str(event.get("source_file","")).casefold():continue
+                    if host and host not in str(event.get("host","")).casefold():continue
+                    if user and user not in str(event.get("user","")).casefold():continue
+                    if process and process not in str(event.get("process","")).casefold():continue
+                    searchable=" ".join(str(event.get(key,"")) for key in ("timestamp","source_file","location","source_type","event_id","level","provider","host","user","process","message"))
+                    if q and q not in searchable.casefold():continue
+                    row={key:event.get(key,"") for key in ("timestamp","source_file","location","source_type","event_id","level","provider","host","user","process","message","sha256")}
+                    row["event_ref"]=_event_ref(index);filtered.append(row)
+                limit=_bounded_int(query.get("limit",["50"])[0],50,1,100);offset=_bounded_int(query.get("offset",["0"])[0],0,0,10000000)
+                return self.json(200,{"total":len(filtered),"offset":offset,"limit":limit,"events":filtered[offset:offset+limit]})
+            if route=="findings":
+                findings=job.get("findings",[]);severity=query.get("severity",[""])[0].upper().strip();filtered=[]
+                for index,finding in enumerate(findings):
+                    if severity and str(finding.get("severity","")).upper()!=severity:continue
+                    row={key:finding.get(key,"") for key in ("severity","rule_id","title","rationale","evidence","source_file","location","timestamp")}
+                    row["finding_ref"]=f"FND-{index+1:06d}"
+                    row["supporting_event_refs"]=[_event_ref(event_index) for event_index,event in enumerate(job.get("events",[])) if event.get("source_file")==finding.get("source_file") and event.get("location")==finding.get("location")]
+                    filtered.append(row)
+                limit=_bounded_int(query.get("limit",["50"])[0],50,1,100);offset=_bounded_int(query.get("offset",["0"])[0],0,0,10000000)
+                return self.json(200,{"total":len(filtered),"offset":offset,"limit":limit,"findings":filtered[offset:offset+limit]})
+            if route=="assessment":
+                return self.json(200,{key:job.get(key) for key in ("caseName","assessment","eventCount","findingCount","aiAnalysis","errors")})
+            if route=="manifest":
+                return self.json(200,{key:job.get(key) for key in ("caseName","manifest","errors")})
+            if route=="results":
+                result={key:job.get(key) for key in ("caseName","analystNotes","events","findings","assessment","manifest","errors","eventCount","findingCount","aiAnalysis")}
+                return self.json(200,result)
+            if route=="report.pdf":
                 try:pdf=pdf_report([Event(**x) for x in job["events"]],[Finding(**x) for x in job["findings"]],job.get("caseName","Investigation"),job.get("analystNotes",""),job.get("aiAnalysis"))
                 except Exception as exc:return self.json(500,{"error":f"PDF generation failed: {type(exc).__name__}: {exc}"})
                 filename=re.sub(r"[^A-Za-z0-9._-]+","_",job.get("caseName","case")).strip("._") or "case"
