@@ -114,7 +114,7 @@ def build_puter_evidence(events, findings):
 
 def worker(jid,files,case,notes):
     events=[];manifest=[];errors=[]
-    with LOCK:JOBS[jid].update(status="running",message="Starting analysis")
+    with LOCK:JOBS[jid].update(status="running",phase="preparing",records_read=0,message="Starting analysis")
     for i,item in enumerate(files):
         name=os.path.basename(str(item.get("name","evidence.bin")))
         try:
@@ -122,14 +122,16 @@ def worker(jid,files,case,notes):
             if not data:raise ValueError("File is empty")
             digest=sha256(data)
             def progress(n):
-                with LOCK:JOBS[jid].update(message=f"Parsing {name}: {n:,} records read")
+                with LOCK:
+                    current=JOBS[jid]
+                    current.update(phase="parsing",records_read=n,message=f"Parsing {name}: {n:,} records read")
             parsed=parse_upload(name,data,progress);events.extend(parsed);count=len(parsed);status="Parsed"
         except Exception as exc:
             errors.append(f"{name}: {type(exc).__name__}: {exc}");digest="";data=b"";count=0;status=errors[-1]
         manifest.append({"file":name,"bytes":len(data),"sha256":digest,"eventsParsed":count,"status":status})
-        with LOCK:JOBS[jid].update(progress=int((i+1)/max(len(files),1)*90),files_done=i+1,files_total=len(files),message=f"Processed {i+1}/{len(files)}: {name}",manifest=manifest.copy(),errors=errors.copy())
+        with LOCK:JOBS[jid].update(progress=int((i+1)/max(len(files),1)*90),phase="file-complete",records_read=0,files_done=i+1,files_total=len(files),message=f"Processed {i+1}/{len(files)}: {name}",manifest=manifest.copy(),errors=errors.copy())
     findings=assess(events);assessment=build_case_assessment(events,findings)
-    with LOCK:JOBS[jid].update(status="complete",progress=100,message="Analysis complete",events=[asdict(e) for e in events],findings=[asdict(f) for f in findings],assessment=assessment,manifest=manifest,errors=errors,caseName=case,analystNotes=notes,eventCount=len(events),findingCount=len(findings))
+    with LOCK:JOBS[jid].update(status="complete",phase="complete",progress=100,message="Analysis complete",events=[asdict(e) for e in events],findings=[asdict(f) for f in findings],assessment=assessment,manifest=manifest,errors=errors,caseName=case,analystNotes=notes,eventCount=len(events),findingCount=len(findings))
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,fmt,*args):print(datetime.now(UTC8).strftime("[%H:%M:%S] ")+fmt%args)
     def send_data(self,status,data,ctype,headers=None):
