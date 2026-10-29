@@ -3,7 +3,14 @@ __pycache__/
 .venv/
 venv/
 .env
+.env.*
+!.env.example
 .streamlit/secrets.toml
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
 *.pdf
 *.csv
 .DS_Store
