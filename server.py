@@ -116,7 +116,7 @@ def pdf_report(events,findings,case_name,notes,ai_analysis=None):
     for e in sorted(events,key=lambda x:x.timestamp or "~")[:500]:rows.append([Paragraph(safe(e.timestamp),styles["SmallCell"]),safe(e.source_type),safe(e.event_id),Paragraph(safe(" / ".join(x for x in (e.host,e.user) if x)),styles["SmallCell"]),Paragraph(safe(e.source_file)+"<br/>"+safe(e.location),styles["SmallCell"]),Paragraph(safe(e.message)[:1000],styles["SmallCell"])])
     story.append(Table(rows,repeatRows=1,colWidths=[32*mm,15*mm,16*mm,28*mm,42*mm,122*mm],style=TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#34495E")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),.3,colors.grey),("VALIGN",(0,0),(-1,-1),"TOP"),("PADDING",(0,0),(-1,-1),3)])))
     if ai_analysis:
-        story.append(Paragraph("OpenAI-assisted correlation (analyst validation required)",styles["Heading2"]))
+        story.append(Paragraph("AI-assisted correlation (analyst validation required)",styles["Heading2"]))
         story.append(Paragraph("Model: "+safe(ai_analysis.get("model","unknown"))+" | Generated: "+safe(ai_analysis.get("generated_at",""))+" | Coverage: "+safe(ai_analysis.get("coverage","prioritized evidence subset")),styles["SmallCell"]))
         for key,label in (("executive_summary","AI assessment"),("malicious_activities","Potential malicious activities"),("correlations","Cross-log correlations"),("gaps","Evidence gaps and limitations"),("recommendations","Recommended validation and response")):
             values=ai_analysis.get(key)
